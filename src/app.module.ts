@@ -17,7 +17,7 @@ import { AdminPartPricesModule } from './admin/part-prices/part-prices.module';
 import { AdminBasePricingModule } from './admin/base-pricing/base-pricing.module';
 import { AdminPartLaborsModule } from './admin/part-labors/part-labors.module';
 import { DevicesModule } from './devices/devices.module';
-
+import { AdminCallLogsModule } from './admin/call-logs/call-logs.module';
 
 
 
@@ -41,6 +41,7 @@ import { DevicesModule } from './devices/devices.module';
     AdminBasePricingModule,
     AdminPartLaborsModule,
     DevicesModule,
+    AdminCallLogsModule,
   ],
   controllers: [CatalogController],
 })

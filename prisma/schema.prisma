@@ -55,6 +55,7 @@ model User {
   TechnicianProfile TechnicianProfile?
   tickets           Ticket[]
   transactions      WalletTransaction[]
+  callLogs          CallLog[]           @relation("UserCallLogs")
 }
 
 model DeviceToken {
@@ -322,6 +323,40 @@ model PricingConfig {
   updatedAt         DateTime @updatedAt
 }
 
+model CallLog {
+  id          Int            @id @default(autoincrement())
+
+  date        DateTime       @db.Date
+
+  operatorId  Int
+  operator   User            @relation("UserCallLogs", fields: [operatorId], references: [id])
+
+  seq         Int
+
+  callTime    DateTime       @default(now())
+
+  subjectText String         @db.Text
+  serviceId   Int?
+  brandId     Int?
+  modelId     Int?
+  problemId   Int?
+  partId      Int?
+
+  callerPhone String         @db.VarChar(32)
+
+  resultText  String?        @db.Text
+  finalStatus CallFinalStatus @default(PENDING)
+  finalizedAt DateTime?
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([date, operatorId])
+  @@index([date])
+  @@index([operatorId])
+  @@unique([date, operatorId, seq])
+}
+
 enum Role {
   user
   admin
@@ -372,4 +407,9 @@ enum NotificationStatus {
 enum OtpPurpose {
   REGISTER
   LOGIN
+}
+
+enum CallFinalStatus {
+  PENDING
+  FINAL
 }
