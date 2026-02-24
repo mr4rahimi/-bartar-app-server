@@ -1,4 +1,3 @@
-// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -6,6 +5,321 @@ generator client {
 datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
+}
+
+model OtpCode {
+  id         Int        @id @default(autoincrement())
+  phone      String
+  purpose    OtpPurpose
+  codeHash   String     @db.VarChar(255)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int        @default(0)
+  createdAt  DateTime   @default(now())
+
+  @@index([phone, purpose, createdAt])
+  @@index([expiresAt])
+}
+
+model Notification {
+  id        Int                 @id @default(autoincrement())
+  userId    Int
+  channel   NotificationChannel
+  status    NotificationStatus  @default(PENDING)
+  title     String?
+  body      String
+  dataJson  String?             @db.Text
+  provider  String?
+  error     String?             @db.Text
+  createdAt DateTime            @default(now())
+  sentAt    DateTime?
+  user      User                @relation(fields: [userId], references: [id], onDelete: NoAction)
+
+  @@index([userId, channel, status])
+}
+
+model User {
+  id                Int                 @id @default(autoincrement())
+  name              String?
+  phone             String              @unique
+  email             String?             @unique
+  password          String
+  role              Role                @default(user)
+  createdAt         DateTime            @default(now())
+  walletBalance     Int                 @default(0)
+  deviceTokens      DeviceToken[]
+  notifications     Notification[]
+  assignedOrders    Order[]             @relation("OrderTechnician")
+  orders            Order[]
+  reports           OrderReport[]
+  TechnicianProfile TechnicianProfile?
+  tickets           Ticket[]
+  transactions      WalletTransaction[]
+}
+
+model DeviceToken {
+  id         Int            @id @default(autoincrement())
+  userId     Int
+  token      String         @unique
+  platform   DevicePlatform @default(android)
+  isActive   Boolean        @default(true)
+  lastSeenAt DateTime       @default(now())
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  user       User           @relation(fields: [userId], references: [id], onDelete: NoAction)
+
+  @@index([userId])
+}
+
+model TechnicianProfile {
+  id         Int      @id @default(autoincrement())
+  userId     Int      @unique
+  bio        String?
+  experience Int?
+  rating     Float?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: NoAction)
+}
+
+model WalletTransaction {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  amount    Int
+  type      String
+  note      String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: NoAction)
+
+  @@index([userId])
+}
+
+model Order {
+  id                    Int           @id @default(autoincrement())
+  orderNumber           String        @unique
+  userId                Int
+  deviceType            String
+  brand                 String?
+  model                 String?
+  issue                 String
+  imageUrl              String?
+  status                OrderStatus   @default(PENDING)
+  orderStage            OrderStage    @default(REGISTERED)
+  notes                 String?
+  pickupMethod          PickupMethod
+  basePrice             Float?
+  finalPrice            Float?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  brandId               Int?
+  modelId               Int?
+  serviceId             Int?
+  technicianId          Int?
+  finalPriceConfirmed   Boolean       @default(false)
+  finalPriceConfirmedAt DateTime?
+  problemId             Int?
+  brandRel              Brand?        @relation(fields: [brandId], references: [id])
+  modelRel              DeviceModel?  @relation(fields: [modelId], references: [id])
+  problem               Problem?      @relation(fields: [problemId], references: [id])
+  service               Service?      @relation(fields: [serviceId], references: [id])
+  technician            User?         @relation("OrderTechnician", fields: [technicianId], references: [id])
+  user                  User          @relation(fields: [userId], references: [id], onDelete: NoAction)
+  reports               OrderReport[]
+
+  @@index([brandId], map: "Order_brandId_fkey")
+  @@index([modelId], map: "Order_modelId_fkey")
+  @@index([problemId], map: "Order_problemId_fkey")
+  @@index([serviceId], map: "Order_serviceId_fkey")
+  @@index([technicianId], map: "Order_technicianId_fkey")
+  @@index([userId], map: "Order_userId_fkey")
+}
+
+model OrderReport {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  actorId   Int?
+  action    String
+  details   String?
+  createdAt DateTime @default(now())
+  actor     User?    @relation(fields: [actorId], references: [id])
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: NoAction)
+
+  @@index([actorId], map: "OrderReport_actorId_fkey")
+  @@index([orderId], map: "OrderReport_orderId_fkey")
+}
+
+model Service {
+  id          Int            @id @default(autoincrement())
+  name        String
+  iconUrl     String?
+  createdAt   DateTime       @default(now())
+  active      Boolean        @default(true)
+  description String?
+  slug        String         @unique
+  brands      BrandService[]
+  models      DeviceModel[]
+  Order       Order[]
+  parts       Part[]
+  partLabors  PartLabor[]
+  partPrices  PartPrice[]
+  Problem     Problem[]
+}
+
+model Brand {
+  id          Int            @id @default(autoincrement())
+  name        String
+  iconUrl     String?
+  createdAt   DateTime       @default(now())
+  active      Boolean        @default(true)
+  description String?
+  slug        String         @unique
+  services    BrandService[]
+  models      DeviceModel[]
+  Order       Order[]
+  partLabors  PartLabor[]
+  partPrices  PartPrice[]
+}
+
+model BrandService {
+  id        Int     @id @default(autoincrement())
+  brandId   Int
+  serviceId Int
+  brand     Brand   @relation(fields: [brandId], references: [id], onDelete: NoAction)
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: NoAction)
+
+  @@unique([brandId, serviceId])
+  @@index([serviceId], map: "BrandService_serviceId_fkey")
+}
+
+model DeviceModel {
+  id         Int         @id @default(autoincrement())
+  name       String
+  code       String?
+  brandId    Int
+  serviceId  Int?
+  createdAt  DateTime    @default(now())
+  active     Boolean     @default(true)
+  brand      Brand       @relation(fields: [brandId], references: [id], onDelete: NoAction)
+  service    Service?    @relation(fields: [serviceId], references: [id])
+  Order      Order[]
+  partLabors PartLabor[]
+  partPrices PartPrice[]
+
+  @@unique([brandId, name])
+  @@index([serviceId], map: "DeviceModel_serviceId_fkey")
+}
+
+model Problem {
+  id           Int          @id @default(autoincrement())
+  name         String
+  code         String?
+  serviceId    Int
+  active       Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  orders       Order[]
+  service      Service      @relation(fields: [serviceId], references: [id], onDelete: NoAction)
+  problemParts ProblemPart?
+
+  @@unique([serviceId, name])
+  @@index([serviceId])
+}
+
+model Banner {
+  id        Int      @id @default(autoincrement())
+  title     String?
+  imageUrl  String
+  linkUrl   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model Ticket {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  subject   String
+  message   String
+  status    String   @default("open")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: NoAction)
+
+  @@index([userId], map: "Ticket_userId_fkey")
+}
+
+model Part {
+  id              Int           @id @default(autoincrement())
+  name            String
+  code            String?
+  serviceId       Int
+  active          Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  service         Service       @relation(fields: [serviceId], references: [id], onDelete: NoAction)
+  labors          PartLabor[]
+  prices          PartPrice[]
+  problemMappings ProblemPart[]
+
+  @@unique([serviceId, name])
+}
+
+model PartPrice {
+  id            Int          @id @default(autoincrement())
+  serviceId     Int
+  brandId       Int?
+  modelId       Int?
+  partId        Int
+  price         Int
+  highCopyPrice Int?
+  copyPrice     Int?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  brand         Brand?       @relation(fields: [brandId], references: [id])
+  model         DeviceModel? @relation(fields: [modelId], references: [id])
+  part          Part         @relation(fields: [partId], references: [id], onDelete: NoAction)
+  service       Service      @relation(fields: [serviceId], references: [id], onDelete: NoAction)
+
+  @@unique([serviceId, brandId, modelId, partId])
+  @@index([serviceId, brandId, modelId, partId])
+  @@index([brandId], map: "PartPrice_brandId_fkey")
+  @@index([modelId], map: "PartPrice_modelId_fkey")
+  @@index([partId], map: "PartPrice_partId_fkey")
+}
+
+model ProblemPart {
+  id        Int      @id @default(autoincrement())
+  problemId Int      @unique
+  partId    Int
+  createdAt DateTime @default(now())
+  part      Part     @relation(fields: [partId], references: [id], onDelete: NoAction)
+  problem   Problem  @relation(fields: [problemId], references: [id], onDelete: NoAction)
+
+  @@index([partId], map: "ProblemPart_partId_fkey")
+}
+
+model PartLabor {
+  id        Int          @id @default(autoincrement())
+  serviceId Int
+  partId    Int
+  brandId   Int?
+  modelId   Int?
+  laborFee  Int
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  brand     Brand?       @relation(fields: [brandId], references: [id])
+  model     DeviceModel? @relation(fields: [modelId], references: [id])
+  part      Part         @relation(fields: [partId], references: [id], onDelete: NoAction)
+  service   Service      @relation(fields: [serviceId], references: [id], onDelete: NoAction)
+
+  @@unique([serviceId, partId, brandId, modelId])
+  @@index([serviceId, partId, brandId, modelId])
+  @@index([brandId], map: "PartLabor_brandId_fkey")
+  @@index([modelId], map: "PartLabor_modelId_fkey")
+  @@index([partId], map: "PartLabor_partId_fkey")
+}
+
+model PricingConfig {
+  id                Int      @id @default(1)
+  partMarkupPercent Float    @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 enum Role {
@@ -33,9 +347,9 @@ enum OrderStage {
 }
 
 enum PickupMethod {
-  PICKUP // پیک
-  IN_PERSON // مراجعه حضوری
-  ON_SITE // تعمیر در محل
+  PICKUP
+  IN_PERSON
+  ON_SITE
 }
 
 enum DevicePlatform {
@@ -43,7 +357,6 @@ enum DevicePlatform {
   ios
   web
 }
-
 
 enum NotificationChannel {
   PUSH
@@ -59,326 +372,4 @@ enum NotificationStatus {
 enum OtpPurpose {
   REGISTER
   LOGIN
-}
-
-model OtpCode {
-  id          Int        @id @default(autoincrement())
-  phone       String
-  purpose     OtpPurpose
-  codeHash    String     @db.VarChar(255)
-  expiresAt   DateTime
-  consumedAt  DateTime?
-  attempts    Int        @default(0)
-  createdAt   DateTime   @default(now())
-
-  @@index([phone, purpose, createdAt])
-  @@index([expiresAt])
-}
-
-model Notification {
-  id        Int                @id @default(autoincrement())
-  userId    Int
-  channel   NotificationChannel
-  status    NotificationStatus @default(PENDING)
-  title     String?
-  body      String
-  dataJson  String?            @db.Text
-  provider  String?            // e.g. "stub", "fcm"
-  error     String?            @db.Text
-  createdAt DateTime           @default(now())
-  sentAt    DateTime?
-
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([userId, channel, status])
-}
-
-
-model User {
-  id                Int                 @id @default(autoincrement())
-  name              String?
-  phone             String              @unique
-  email             String?             @unique
-  password          String
-  role              Role                @default(user)
-  orders            Order[]
-  tickets           Ticket[]
-  reports           OrderReport[]
-  walletBalance     Int                 @default(0)
-  transactions      WalletTransaction[]
-  assignedOrders    Order[]             @relation("OrderTechnician")
-  deviceTokens       DeviceToken[]
-  notifications Notification[]
-  createdAt         DateTime            @default(now())
-  TechnicianProfile TechnicianProfile?
-}
-
-model DeviceToken {
-  id         Int            @id @default(autoincrement())
-  userId     Int
-  token      String         @unique
-  platform   DevicePlatform @default(android)
-  isActive   Boolean        @default(true)
-  lastSeenAt DateTime       @default(now())
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-}
-
-
-model TechnicianProfile {
-  id         Int      @id @default(autoincrement())
-  userId     Int      @unique
-  bio        String?
-  experience Int?
-  rating     Float?
-  createdAt  DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id])
-}
-
-model WalletTransaction {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  amount    Int // مثبت=افزایش، منفی=کاهش (واحد: تومان)
-  type      String // e.g. "admin_adjust", "order_refund", "topup"
-  note      String?
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-}
-
-model Order {
-  id                    Int          @id @default(autoincrement())
-  orderNumber           String       @unique
-  userId                Int
-  serviceId             Int?
-  brandId               Int?
-  modelId               Int?
-  deviceType            String
-  brand                 String?
-  model                 String?
-  issue                 String
-  imageUrl              String?
-  status                OrderStatus  @default(PENDING)
-  orderStage            OrderStage   @default(REGISTERED)
-  notes                 String?
-  pickupMethod          PickupMethod
-  basePrice             Float?
-  finalPrice            Float?
-  finalPriceConfirmed   Boolean      @default(false)
-  finalPriceConfirmedAt DateTime?
-  createdAt             DateTime     @default(now())
-  updatedAt             DateTime     @updatedAt
-
-  user     User         @relation(fields: [userId], references: [id])
-  service  Service?     @relation(fields: [serviceId], references: [id])
-  brandRel Brand?       @relation(fields: [brandId], references: [id])
-  modelRel DeviceModel? @relation(fields: [modelId], references: [id])
-
-  technicianId Int?
-  technician   User? @relation("OrderTechnician", fields: [technicianId], references: [id])
-
-  problemId Int?
-  problem   Problem? @relation(fields: [problemId], references: [id])
-
-  reports OrderReport[]
-}
-
-model OrderReport {
-  id        Int      @id @default(autoincrement())
-  orderId   Int
-  actorId   Int?
-  action    String
-  details   String?
-  createdAt DateTime @default(now())
-
-  order Order @relation(fields: [orderId], references: [id])
-  actor User? @relation(fields: [actorId], references: [id])
-}
-
-model Service {
-  id          Int      @id @default(autoincrement())
-  name        String
-  slug        String   @unique
-  iconUrl     String?
-  description String?
-  createdAt   DateTime @default(now())
-  active      Boolean  @default(true)
-
-  brands  BrandService[]
-  models  DeviceModel[]
-  Order   Order[]
-  Problem Problem[]
-
-  parts      Part[] // ⬅ قطعات این سرویس
-  partPrices PartPrice[] // ⬅ قیمت‌های قطعات برای این سرویس
-  partLabors PartLabor[]
-}
-
-model Brand {
-  id          Int      @id @default(autoincrement())
-  name        String
-  slug        String   @unique
-  iconUrl     String?
-  description String?
-  createdAt   DateTime @default(now())
-  active      Boolean  @default(true)
-
-  services BrandService[]
-  models   DeviceModel[]
-  Order    Order[]
-
-  partPrices PartPrice[] // ⬅ قیمت‌های قطعات برای این برند
-  partLabors PartLabor[]
-}
-
-model BrandService {
-  id        Int @id @default(autoincrement())
-  brandId   Int
-  serviceId Int
-
-  brand   Brand   @relation(fields: [brandId], references: [id])
-  service Service @relation(fields: [serviceId], references: [id])
-
-  @@unique([brandId, serviceId])
-}
-
-model DeviceModel {
-  id        Int      @id @default(autoincrement())
-  name      String
-  code      String? // مثلاً A16 یا مدل داخلی
-  brandId   Int
-  serviceId Int? // اختیاری — اگر لازم باشه محدود به سرویس خاص
-  createdAt DateTime @default(now())
-  active    Boolean  @default(true)
-
-  brand   Brand    @relation(fields: [brandId], references: [id])
-  service Service? @relation(fields: [serviceId], references: [id])
-  Order   Order[]
-
-  partPrices PartPrice[] // ⬅ قیمت قطعات برای این مدل
-  partLabors PartLabor[]
-
-  @@unique([brandId, name]) // تضمین می‌کنه یک مدل برای یک برند تکرار نشه
-}
-
-model Problem {
-  id        Int      @id @default(autoincrement())
-  name      String
-  code      String? // optional internal code
-  serviceId Int
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-
-  service Service @relation(fields: [serviceId], references: [id])
-
-  problemParts ProblemPart[]
-  orders       Order[]
-
-  @@unique([serviceId, name])
-  @@index([serviceId])
-}
-
-model Banner {
-  id        Int      @id @default(autoincrement())
-  title     String?
-  imageUrl  String
-  linkUrl   String?
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-}
-
-model Ticket {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  subject   String
-  message   String
-  status    String   @default("open") // open, closed, pending
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id])
-}
-
-model Part {
-  id        Int      @id @default(autoincrement())
-  name      String
-  code      String?
-  serviceId Int
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-
-  service         Service       @relation(fields: [serviceId], references: [id])
-  prices          PartPrice[]
-  problemMappings ProblemPart[]
-  labors          PartLabor[]
-
-  @@unique([serviceId, name])
-}
-
-model PartPrice {
-  id        Int      @id @default(autoincrement())
-  serviceId Int
-  brandId   Int?
-  modelId   Int?
-  partId    Int
-  price     Int
-
-  highCopyPrice Int?
-  copyPrice     Int?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  service Service      @relation(fields: [serviceId], references: [id])
-  brand   Brand?       @relation(fields: [brandId], references: [id])
-  model   DeviceModel? @relation(fields: [modelId], references: [id])
-  part    Part         @relation(fields: [partId], references: [id])
-
-  @@unique([serviceId, brandId, modelId, partId])
-  @@index([serviceId, brandId, modelId, partId])
-}
-
-model ProblemPart {
-  id        Int      @id @default(autoincrement())
-  problemId Int
-  partId    Int
-  createdAt DateTime @default(now())
-
-  problem Problem @relation(fields: [problemId], references: [id])
-  part    Part    @relation(fields: [partId], references: [id])
-
-  @@unique([problemId])
-}
-
-model PartLabor {
-  id        Int      @id @default(autoincrement())
-  serviceId Int
-  partId    Int
-  brandId   Int?
-  modelId   Int?
-  laborFee  Int // تومان
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  service Service      @relation(fields: [serviceId], references: [id])
-  brand   Brand?       @relation(fields: [brandId], references: [id])
-  model   DeviceModel? @relation(fields: [modelId], references: [id])
-  part    Part         @relation(fields: [partId], references: [id])
-
-  @@unique([serviceId, partId, brandId, modelId])
-  @@index([serviceId, partId, brandId, modelId])
-}
-
-model PricingConfig {
-  id                Int      @id @default(1)
-  partMarkupPercent Float    @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
 }
