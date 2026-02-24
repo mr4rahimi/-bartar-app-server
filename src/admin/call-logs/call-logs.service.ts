@@ -19,9 +19,8 @@ function toDateOnly(dateStr?: string): Date {
   const mo = Number(m[2]);
   const d = Number(m[3]);
 
-  // ماه در JS از 0 شروع می‌شود
   const dt = new Date(y, mo - 1, d);
-  // چک ساده برای تاریخ‌های نامعتبر (مثل 2026-02-31)
+
   if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) {
     throw new BadRequestException('Invalid date value');
   }
@@ -46,7 +45,7 @@ export class AdminCallLogsService {
 
     const dataForInsert: Prisma.CallLogCreateInput = {
       date: dateOnly,
-      seq: 0 as any, // بعداً ست می‌شود
+      seq: 0 as any, 
       callTime: new Date(),
       subjectText,
       callerPhone,
@@ -54,17 +53,9 @@ export class AdminCallLogsService {
       finalStatus: CallFinalStatus.PENDING,
       finalizedAt: null,
       operator: { connect: { id: operatorId } },
-
-      // refs (اختیاری)
-      serviceId: dto.serviceId ?? undefined,
-      brandId: dto.brandId ?? undefined,
-      modelId: dto.modelId ?? undefined,
-      problemId: dto.problemId ?? undefined,
-      partId: dto.partId ?? undefined,
     };
 
-    // تولید seq به صورت atomic (برای همزمانی چند اپراتور/سیستم)
-    // با unique index اگر collision شد، retry سبک
+
     const maxRetries = 2;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -99,8 +90,7 @@ export class AdminCallLogsService {
   async list(input?: { date?: string }) {
     const dateOnly = toDateOnly(input?.date);
 
-    // همه adminها همه رو می‌بینند (طبق تصمیم)
-    // برای UI بهتر: operator را هم include می‌کنیم (نام/تلفن)
+  
     return this.prisma.callLog.findMany({
       where: { date: dateOnly },
       orderBy: [{ operatorId: 'asc' }, { seq: 'asc' }],
@@ -120,14 +110,13 @@ export class AdminCallLogsService {
     if (typeof dto.callerPhone !== 'undefined') data.callerPhone = String(dto.callerPhone).trim();
     if (typeof dto.resultText !== 'undefined') data.resultText = dto.resultText == null ? null : String(dto.resultText).trim();
 
-    // refs (اجازه null برای پاک کردن)
+
     if (typeof dto.serviceId !== 'undefined') data.serviceId = dto.serviceId as any;
     if (typeof dto.brandId !== 'undefined') data.brandId = dto.brandId as any;
     if (typeof dto.modelId !== 'undefined') data.modelId = dto.modelId as any;
     if (typeof dto.problemId !== 'undefined') data.problemId = dto.problemId as any;
     if (typeof dto.partId !== 'undefined') data.partId = dto.partId as any;
 
-    // ولیدیشن حداقلی
     if ('subjectText' in data && !(data.subjectText as string)) {
       throw new BadRequestException('subjectText cannot be empty');
     }
@@ -172,3 +161,4 @@ export class AdminCallLogsService {
       },
     });
   }
+}
