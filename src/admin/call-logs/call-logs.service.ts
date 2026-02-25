@@ -5,8 +5,6 @@ import { CreateCallLogDto } from './dto/create-call-log.dto';
 import { UpdateCallLogDto } from './dto/update-call-log.dto';
 import { ListCallLogsDto } from './dto/list-call-logs.dto';
 
-
-
 function toDateOnlyUTC(dateStr?: string): Date {
   // YYYY-MM-DD -> Date at 00:00:00 UTC (timezone-safe)
   if (!dateStr) {
@@ -22,83 +20,18 @@ function toDateOnlyUTC(dateStr?: string): Date {
   const d = Number(m[3]);
 
   const dt = new Date(Date.UTC(y, mo - 1, d));
-  // validate
-  if (
-    dt.getUTCFullYear() !== y ||
-    dt.getUTCMonth() !== mo - 1 ||
-    dt.getUTCDate() !== d
-  ) {
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) {
     throw new BadRequestException('Invalid date value');
   }
   return dt;
 }
 
-function toDateOnlyOrThrow(dateStr: string): Date {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-  if (!m) throw new Error('Invalid date format');
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  const dt = new Date(y, mo - 1, d);
-  return dt;
+function toDateOnlyUTCOrThrow(dateStr: string): Date {
+  return toDateOnlyUTC(dateStr);
 }
 
-function addDays(date: Date, days: number) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
-}
-
-async history(dto: ListCallLogsDto) {
-  const take = Math.min(dto.take ?? 50, 200);
-  const skip = dto.skip ?? 0;
-
-  const where: Prisma.CallLogWhereInput = {};
-
-  // date range (روی فیلد date)
-  if (dto.from || dto.to) {
-    const gte = dto.from ? toDateOnlyOrThrow(dto.from) : undefined;
-    const lte = dto.to ? toDateOnlyOrThrow(dto.to) : undefined;
-
-    // چون date شما DateOnly ذخیره می‌شه، بهتره lte را inclusive کنیم:
-    // لبه بالا = to + 1day (exclusive)
-    where.date = {
-      ...(gte ? { gte } : {}),
-      ...(lte ? { lt: addDays(lte, 1) } : {}),
-    };
-  }
-
-  if (typeof dto.serviceId === 'number') {
-   
-    where.serviceId = dto.serviceId;
-  }
-
-  const q = (dto.q || '').trim();
-  if (q) {
-    where.OR = [
-      { callerPhone: { contains: q } },
-      { subjectText: { contains: q } },
-      { resultText: { contains: q } },
-     
-      { operator: { is: { phone: { contains: q } } } },
-      { operator: { is: { name: { contains: q } } } },
-    ];
-  }
-
-  const [total, items] = await Promise.all([
-    this.prisma.callLog.count({ where }),
-    this.prisma.callLog.findMany({
-      where,
-      orderBy: [{ date: 'desc' }, { operatorId: 'asc' }, { seq: 'asc' }],
-      skip,
-      take,
-      include: {
-        operator: { select: { id: true, name: true, phone: true, role: true } },
-      },
-    }),
-  ]);
-
-  return { total, items, skip, take };
+function addDaysUTC(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
 @Injectable()
@@ -118,11 +51,11 @@ export class AdminCallLogsService {
     if (!callerPhone) throw new BadRequestException('callerPhone is required');
 
     // اگر در DTO داری، این‌ها را هم ست می‌کنیم (اختیاری)
-    const serviceId = (dto as any).serviceId ?? null;
-    const brandId = (dto as any).brandId ?? null;
-    const modelId = (dto as any).modelId ?? null;
-    const problemId = (dto as any).problemId ?? null;
-    const partId = (dto as any).partId ?? null;
+    const serviceId = (dto as unknown as { serviceId?: number | null }).serviceId ?? null;
+    const brandId = (dto as unknown as { brandId?: number | null }).brandId ?? null;
+    const modelId = (dto as unknown as { modelId?: number | null }).modelId ?? null;
+    const problemId = (dto as unknown as { problemId?: number | null }).problemId ?? null;
+    const partId = (dto as unknown as { partId?: number | null }).partId ?? null;
 
     // ✅ Race-safe seq allocation: MAX(seq)+1 with retry on P2002
     const maxRetries = 12;
@@ -136,7 +69,6 @@ export class AdminCallLogsService {
 
         const nextSeq = (agg._max.seq ?? 0) + 1;
 
-        // ✅ UncheckedCreateInput اجازه می‌دهد operatorId را مستقیم ست کنیم
         const data: Prisma.CallLogUncheckedCreateInput = {
           date: dateOnly,
           operatorId,
@@ -162,10 +94,7 @@ export class AdminCallLogsService {
           },
         });
       } catch (e: any) {
-        // Prisma unique constraint
-        if (e?.code === 'P2002' && attempt < maxRetries - 1) {
-          continue;
-        }
+        if (e?.code === 'P2002' && attempt < maxRetries - 1) continue;
         throw e;
       }
     }
@@ -185,6 +114,55 @@ export class AdminCallLogsService {
     });
   }
 
+  async history(dto: ListCallLogsDto) {
+    const take = Math.min(dto.take ?? 50, 200);
+    const skip = dto.skip ?? 0;
+
+    const where: Prisma.CallLogWhereInput = {};
+
+    // date range on `date` (UTC DateOnly)
+    if (dto.from || dto.to) {
+      const gte = dto.from ? toDateOnlyUTCOrThrow(dto.from) : undefined;
+      const toDate = dto.to ? toDateOnlyUTCOrThrow(dto.to) : undefined;
+
+      // inclusive `to` => lt(to+1day)
+      where.date = {
+        ...(gte ? { gte } : {}),
+        ...(toDate ? { lt: addDaysUTC(toDate, 1) } : {}),
+      };
+    }
+
+    if (typeof dto.serviceId === 'number') {
+      where.serviceId = dto.serviceId;
+    }
+
+    const q = (dto.q || '').trim();
+    if (q) {
+      where.OR = [
+        { callerPhone: { contains: q } },
+        { subjectText: { contains: q } },
+        { resultText: { contains: q } },
+        { operator: { is: { phone: { contains: q } } } },
+        { operator: { is: { name: { contains: q } } } },
+      ];
+    }
+
+    const [total, items] = await Promise.all([
+      this.prisma.callLog.count({ where }),
+      this.prisma.callLog.findMany({
+        where,
+        orderBy: [{ date: 'desc' }, { operatorId: 'asc' }, { seq: 'asc' }],
+        skip,
+        take,
+        include: {
+          operator: { select: { id: true, name: true, phone: true, role: true } },
+        },
+      }),
+    ]);
+
+    return { total, items, skip, take };
+  }
+
   async update(id: number, dto: UpdateCallLogDto) {
     const existing = await this.prisma.callLog.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('CallLog not found');
@@ -198,11 +176,18 @@ export class AdminCallLogsService {
     }
 
     // optional ids
-    if (typeof (dto as any).serviceId !== 'undefined') (data as any).serviceId = (dto as any).serviceId;
-    if (typeof (dto as any).brandId !== 'undefined') (data as any).brandId = (dto as any).brandId;
-    if (typeof (dto as any).modelId !== 'undefined') (data as any).modelId = (dto as any).modelId;
-    if (typeof (dto as any).problemId !== 'undefined') (data as any).problemId = (dto as any).problemId;
-    if (typeof (dto as any).partId !== 'undefined') (data as any).partId = (dto as any).partId;
+    const anyDto = dto as unknown as {
+      serviceId?: number | null;
+      brandId?: number | null;
+      modelId?: number | null;
+      problemId?: number | null;
+      partId?: number | null;
+    };
+    if (typeof anyDto.serviceId !== 'undefined') (data as any).serviceId = anyDto.serviceId;
+    if (typeof anyDto.brandId !== 'undefined') (data as any).brandId = anyDto.brandId;
+    if (typeof anyDto.modelId !== 'undefined') (data as any).modelId = anyDto.modelId;
+    if (typeof anyDto.problemId !== 'undefined') (data as any).problemId = anyDto.problemId;
+    if (typeof anyDto.partId !== 'undefined') (data as any).partId = anyDto.partId;
 
     if ('subjectText' in data && !(data.subjectText as string)) {
       throw new BadRequestException('subjectText cannot be empty');

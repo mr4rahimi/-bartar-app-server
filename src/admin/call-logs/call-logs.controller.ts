@@ -19,7 +19,6 @@ import { UpdateCallLogDto } from './dto/update-call-log.dto';
 import { FinalizeCallLogDto } from './dto/finalize-call-log.dto';
 import { ListCallLogsDto } from './dto/list-call-logs.dto';
 
-
 @Controller('admin/call-logs')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class AdminCallLogsController {
@@ -33,9 +32,9 @@ export class AdminCallLogsController {
 
   @Post()
   @Roles('admin')
-  create(@Req() req: any, @Body() body: CreateCallLogDto) {
+  create(@Req() req: { user?: { userId?: number } }, @Body() body: CreateCallLogDto) {
     const operatorId = req.user?.userId;
-    return this.svc.create(operatorId, body);
+    return this.svc.create(operatorId as number, body);
   }
 
   @Get()
@@ -52,10 +51,7 @@ export class AdminCallLogsController {
 
   @Patch(':id/finalize')
   @Roles('admin')
-  finalize(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: FinalizeCallLogDto,
-  ) {
+  finalize(@Param('id', ParseIntPipe) id: number, @Body() body: FinalizeCallLogDto) {
     return this.svc.setFinalized(id, body.finalized);
   }
 }
