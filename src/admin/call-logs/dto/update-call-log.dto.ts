@@ -14,7 +14,6 @@ export class UpdateCallLogDto {
   @IsString()
   resultText?: string;
 
-  // refs (اختیاری)
   @IsOptional()
   @IsInt()
   serviceId?: number | null;

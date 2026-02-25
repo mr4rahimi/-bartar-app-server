@@ -1,15 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma, CallFinalStatus } from '@prisma/client';
+import { CallFinalStatus, Prisma } from '@prisma/client';
 import { CreateCallLogDto } from './dto/create-call-log.dto';
 import { UpdateCallLogDto } from './dto/update-call-log.dto';
 
-function toDateOnly(dateStr?: string): Date {
-  // انتظار: YYYY-MM-DD
+function toDateOnlyUTC(dateStr?: string): Date {
+  // YYYY-MM-DD -> Date at 00:00:00 UTC (timezone-safe)
   if (!dateStr) {
     const now = new Date();
-    // ساخت DateOnly با timezone محلی سرور
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   }
 
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
@@ -19,9 +18,13 @@ function toDateOnly(dateStr?: string): Date {
   const mo = Number(m[2]);
   const d = Number(m[3]);
 
-  const dt = new Date(y, mo - 1, d);
-
-  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) {
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  // validate
+  if (
+    dt.getUTCFullYear() !== y ||
+    dt.getUTCMonth() !== mo - 1 ||
+    dt.getUTCDate() !== d
+  ) {
     throw new BadRequestException('Invalid date value');
   }
   return dt;
@@ -34,63 +37,74 @@ export class AdminCallLogsService {
   async create(operatorId: number, dto: CreateCallLogDto) {
     if (!operatorId) throw new BadRequestException('Missing operatorId (auth)');
 
-    const dateOnly = toDateOnly(dto.date);
+    const dateOnly = toDateOnlyUTC(dto.date);
 
     const subjectText = (dto.subjectText || '').trim();
     const callerPhone = (dto.callerPhone || '').trim();
-    const resultText = dto.resultText != null ? String(dto.resultText).trim() : undefined;
+    const resultText = dto.resultText != null ? String(dto.resultText).trim() : null;
 
     if (!subjectText) throw new BadRequestException('subjectText is required');
     if (!callerPhone) throw new BadRequestException('callerPhone is required');
 
-    const dataForInsert: Prisma.CallLogCreateInput = {
-      date: dateOnly,
-      seq: 0 as any, 
-      callTime: new Date(),
-      subjectText,
-      callerPhone,
-      resultText: resultText || undefined,
-      finalStatus: CallFinalStatus.PENDING,
-      finalizedAt: null,
-      operator: { connect: { id: operatorId } },
-    };
+    // اگر در DTO داری، این‌ها را هم ست می‌کنیم (اختیاری)
+    const serviceId = (dto as any).serviceId ?? null;
+    const brandId = (dto as any).brandId ?? null;
+    const modelId = (dto as any).modelId ?? null;
+    const problemId = (dto as any).problemId ?? null;
+    const partId = (dto as any).partId ?? null;
 
+    // ✅ Race-safe seq allocation: MAX(seq)+1 with retry on P2002
+    const maxRetries = 12;
 
-    const maxRetries = 2;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        return await this.prisma.$transaction(async (tx) => {
-          const last = await tx.callLog.findFirst({
-            where: { date: dateOnly, operatorId },
-            orderBy: { seq: 'desc' },
-            select: { seq: true },
-          });
+        const agg = await this.prisma.callLog.aggregate({
+          where: { date: dateOnly, operatorId },
+          _max: { seq: true },
+        });
 
-          const nextSeq = (last?.seq ?? 0) + 1;
+        const nextSeq = (agg._max.seq ?? 0) + 1;
 
-          const created = await tx.callLog.create({
-            data: {
-              ...dataForInsert,
-              seq: nextSeq,
-            } as any,
-          });
+        // ✅ UncheckedCreateInput اجازه می‌دهد operatorId را مستقیم ست کنیم
+        const data: Prisma.CallLogUncheckedCreateInput = {
+          date: dateOnly,
+          operatorId,
+          seq: nextSeq,
+          callTime: new Date(),
+          subjectText,
+          callerPhone,
+          resultText: resultText || null,
+          finalStatus: CallFinalStatus.PENDING,
+          finalizedAt: null,
 
-          return created;
+          serviceId,
+          brandId,
+          modelId,
+          problemId,
+          partId,
+        };
+
+        return await this.prisma.callLog.create({
+          data,
+          include: {
+            operator: { select: { id: true, name: true, phone: true, role: true } },
+          },
         });
       } catch (e: any) {
-        // Prisma unique constraint => P2002
-        const code = e?.code || e?.meta?.cause;
-        if (e?.code === 'P2002' && attempt < maxRetries) continue;
+        // Prisma unique constraint
+        if (e?.code === 'P2002' && attempt < maxRetries - 1) {
+          continue;
+        }
         throw e;
       }
     }
+
+    throw new BadRequestException('Could not allocate seq. Please retry.');
   }
 
   async list(input?: { date?: string }) {
-    const dateOnly = toDateOnly(input?.date);
+    const dateOnly = toDateOnlyUTC(input?.date);
 
-  
     return this.prisma.callLog.findMany({
       where: { date: dateOnly },
       orderBy: [{ operatorId: 'asc' }, { seq: 'asc' }],
@@ -108,14 +122,16 @@ export class AdminCallLogsService {
 
     if (typeof dto.subjectText !== 'undefined') data.subjectText = String(dto.subjectText).trim();
     if (typeof dto.callerPhone !== 'undefined') data.callerPhone = String(dto.callerPhone).trim();
-    if (typeof dto.resultText !== 'undefined') data.resultText = dto.resultText == null ? null : String(dto.resultText).trim();
+    if (typeof dto.resultText !== 'undefined') {
+      data.resultText = dto.resultText == null ? null : String(dto.resultText).trim();
+    }
 
-
-    if (typeof dto.serviceId !== 'undefined') data.serviceId = dto.serviceId as any;
-    if (typeof dto.brandId !== 'undefined') data.brandId = dto.brandId as any;
-    if (typeof dto.modelId !== 'undefined') data.modelId = dto.modelId as any;
-    if (typeof dto.problemId !== 'undefined') data.problemId = dto.problemId as any;
-    if (typeof dto.partId !== 'undefined') data.partId = dto.partId as any;
+    // optional ids
+    if (typeof (dto as any).serviceId !== 'undefined') (data as any).serviceId = (dto as any).serviceId;
+    if (typeof (dto as any).brandId !== 'undefined') (data as any).brandId = (dto as any).brandId;
+    if (typeof (dto as any).modelId !== 'undefined') (data as any).modelId = (dto as any).modelId;
+    if (typeof (dto as any).problemId !== 'undefined') (data as any).problemId = (dto as any).problemId;
+    if (typeof (dto as any).partId !== 'undefined') (data as any).partId = (dto as any).partId;
 
     if ('subjectText' in data && !(data.subjectText as string)) {
       throw new BadRequestException('subjectText cannot be empty');
@@ -137,25 +153,11 @@ export class AdminCallLogsService {
     const existing = await this.prisma.callLog.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('CallLog not found');
 
-    if (finalized) {
-      return this.prisma.callLog.update({
-        where: { id },
-        data: {
-          finalStatus: CallFinalStatus.FINAL,
-          finalizedAt: new Date(),
-        },
-        include: {
-          operator: { select: { id: true, name: true, phone: true, role: true } },
-        },
-      });
-    }
-
     return this.prisma.callLog.update({
       where: { id },
-      data: {
-        finalStatus: CallFinalStatus.PENDING,
-        finalizedAt: null,
-      },
+      data: finalized
+        ? { finalStatus: CallFinalStatus.FINAL, finalizedAt: new Date() }
+        : { finalStatus: CallFinalStatus.PENDING, finalizedAt: null },
       include: {
         operator: { select: { id: true, name: true, phone: true, role: true } },
       },
