@@ -18,6 +18,7 @@ import { CreateCallLogDto } from './dto/create-call-log.dto';
 import { UpdateCallLogDto } from './dto/update-call-log.dto';
 import { FinalizeCallLogDto } from './dto/finalize-call-log.dto';
 import { ListCallLogsDto } from './dto/list-call-logs.dto';
+import { CallLogsDailyReportDto } from './dto/call-logs-daily-report.dto';
 
 @Controller('admin/call-logs')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
@@ -53,5 +54,19 @@ export class AdminCallLogsController {
   @Roles('admin')
   finalize(@Param('id', ParseIntPipe) id: number, @Body() body: FinalizeCallLogDto) {
     return this.svc.setFinalized(id, body.finalized);
+  }
+
+    @Get('reports/daily')
+  @Roles('admin')
+  daily(@Query() q: CallLogsDailyReportDto) {
+    const serviceId =
+      q.serviceId == null || q.serviceId === '' ? undefined : Number(q.serviceId);
+
+    return this.svc.dailyReport({
+      range: q.range,
+      from: q.from,
+      to: q.to,
+      serviceId: Number.isFinite(serviceId as number) ? (serviceId as number) : undefined,
+    });
   }
 }

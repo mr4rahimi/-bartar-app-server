@@ -219,4 +219,96 @@ export class AdminCallLogsService {
       },
     });
   }
+
+    async dailyReport(input: {
+    from?: string;
+    to?: string;
+    range?: '7d' | '30d' | '3m' | '1y' | 'all';
+    serviceId?: number;
+  }) {
+    // NOTE: date در DB به صورت DateOnly UTC ذخیره می‌شود (00:00:00Z)
+    // ما برای خروجی هم همان YYYY-MM-DD را برمی‌گردانیم.
+
+    const range = input.range ?? '7d';
+
+    const now = new Date();
+    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    function ymdUTC(d: Date) {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function parseYmdToUTC(s: string): Date {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+      if (!m) throw new BadRequestException('Invalid date format. Expected YYYY-MM-DD');
+      const y = Number(m[1]);
+      const mo = Number(m[2]);
+      const d = Number(m[3]);
+      const dt = new Date(Date.UTC(y, mo - 1, d));
+      if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) {
+        throw new BadRequestException('Invalid date value');
+      }
+      return dt;
+    }
+
+    function addDaysUTC(d: Date, days: number) {
+      return new Date(d.getTime() + days * 86400000);
+    }
+
+    function startByPreset(): Date {
+      if (range === '7d') return addDaysUTC(todayUTC, -6);
+      if (range === '30d') return addDaysUTC(todayUTC, -29);
+
+      // 3m و 1y: تقریبی و کافی برای گزارش (اگر دقیق ماه‌محور خواستی بعداً درستش می‌کنیم)
+      if (range === '3m') return addDaysUTC(todayUTC, -90);
+      if (range === '1y') return addDaysUTC(todayUTC, -365);
+      return new Date(Date.UTC(1970, 0, 1));
+    }
+
+    const fromDate = input.from ? parseYmdToUTC(input.from) : startByPreset();
+    const toDateInclusive = input.to ? parseYmdToUTC(input.to) : todayUTC;
+    const toExclusive = addDaysUTC(toDateInclusive, 1);
+
+    const where: Prisma.CallLogWhereInput = {
+      date: { gte: fromDate, lt: toExclusive },
+    };
+
+    if (typeof input.serviceId === 'number') {
+      where.serviceId = input.serviceId;
+    }
+
+    // MySQL groupBy روی DateTime (date) خوب جواب می‌دهد چون date شما همیشه 00:00Z است.
+    const grouped = await this.prisma.callLog.groupBy({
+      by: ['date'],
+      where,
+      _count: { _all: true },
+      orderBy: { date: 'asc' },
+    });
+
+    // map برای اینکه روزهایی که رکورد ندارند هم 0 شوند
+    const map = new Map<string, number>();
+    for (const g of grouped) {
+      const key = ymdUTC(g.date as unknown as Date);
+      map.set(key, g._count._all);
+    }
+
+    // build full series (continuous days)
+    const items: Array<{ date: string; count: number }> = [];
+    for (let d = fromDate; d.getTime() < toExclusive.getTime(); d = addDaysUTC(d, 1)) {
+      const key = ymdUTC(d);
+      items.push({ date: key, count: map.get(key) ?? 0 });
+    }
+
+    const total = items.reduce((s, x) => s + x.count, 0);
+
+    return {
+      from: ymdUTC(fromDate),
+      to: ymdUTC(toDateInclusive),
+      total,
+      items,
+    };
+  }
 }
