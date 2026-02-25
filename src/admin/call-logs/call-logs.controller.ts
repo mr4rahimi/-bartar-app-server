@@ -17,11 +17,19 @@ import { AdminCallLogsService } from './call-logs.service';
 import { CreateCallLogDto } from './dto/create-call-log.dto';
 import { UpdateCallLogDto } from './dto/update-call-log.dto';
 import { FinalizeCallLogDto } from './dto/finalize-call-log.dto';
+import { ListCallLogsDto } from './dto/list-call-logs.dto';
+
 
 @Controller('admin/call-logs')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 export class AdminCallLogsController {
   constructor(private svc: AdminCallLogsService) {}
+
+  @Get('history')
+  @Roles('admin')
+  history(@Query() q: ListCallLogsDto) {
+    return this.svc.history(q);
+  }
 
   @Post()
   @Roles('admin')

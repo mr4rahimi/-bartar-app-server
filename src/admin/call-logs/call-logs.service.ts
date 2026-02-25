@@ -3,6 +3,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CallFinalStatus, Prisma } from '@prisma/client';
 import { CreateCallLogDto } from './dto/create-call-log.dto';
 import { UpdateCallLogDto } from './dto/update-call-log.dto';
+import { ListCallLogsDto } from './dto/list-call-logs.dto';
+
+
 
 function toDateOnlyUTC(dateStr?: string): Date {
   // YYYY-MM-DD -> Date at 00:00:00 UTC (timezone-safe)
@@ -28,6 +31,74 @@ function toDateOnlyUTC(dateStr?: string): Date {
     throw new BadRequestException('Invalid date value');
   }
   return dt;
+}
+
+function toDateOnlyOrThrow(dateStr: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) throw new Error('Invalid date format');
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(y, mo - 1, d);
+  return dt;
+}
+
+function addDays(date: Date, days: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+async history(dto: ListCallLogsDto) {
+  const take = Math.min(dto.take ?? 50, 200);
+  const skip = dto.skip ?? 0;
+
+  const where: Prisma.CallLogWhereInput = {};
+
+  // date range (روی فیلد date)
+  if (dto.from || dto.to) {
+    const gte = dto.from ? toDateOnlyOrThrow(dto.from) : undefined;
+    const lte = dto.to ? toDateOnlyOrThrow(dto.to) : undefined;
+
+    // چون date شما DateOnly ذخیره می‌شه، بهتره lte را inclusive کنیم:
+    // لبه بالا = to + 1day (exclusive)
+    where.date = {
+      ...(gte ? { gte } : {}),
+      ...(lte ? { lt: addDays(lte, 1) } : {}),
+    };
+  }
+
+  if (typeof dto.serviceId === 'number') {
+   
+    where.serviceId = dto.serviceId;
+  }
+
+  const q = (dto.q || '').trim();
+  if (q) {
+    where.OR = [
+      { callerPhone: { contains: q } },
+      { subjectText: { contains: q } },
+      { resultText: { contains: q } },
+     
+      { operator: { is: { phone: { contains: q } } } },
+      { operator: { is: { name: { contains: q } } } },
+    ];
+  }
+
+  const [total, items] = await Promise.all([
+    this.prisma.callLog.count({ where }),
+    this.prisma.callLog.findMany({
+      where,
+      orderBy: [{ date: 'desc' }, { operatorId: 'asc' }, { seq: 'asc' }],
+      skip,
+      take,
+      include: {
+        operator: { select: { id: true, name: true, phone: true, role: true } },
+      },
+    }),
+  ]);
+
+  return { total, items, skip, take };
 }
 
 @Injectable()
